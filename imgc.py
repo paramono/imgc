@@ -7,6 +7,8 @@ import sys, os, time
 import argparse
 import re
 
+import threading
+
 IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif']
 IMAGE_JPG  = ['jpg', 'jpeg']
 
@@ -58,7 +60,6 @@ size_patterns  = [
     ("rel", pat_rel, size_parse_rel),
 ]
 
-
 class ImageHandler:
     dir_postfix = 'imgc'
     dir_files = '_files-imgc'
@@ -66,9 +67,14 @@ class ImageHandler:
     imgs_done = 0
     imgs_total = 0
 
-    def __init__(self, **kwargs):
+    def __init__(self, queue=None, **kwargs):
         self.__dict__.update(kwargs)
         self.images = [] # list of (src, dst) tuples
+        threading.Thread.__init__(self)
+        self.queue = queue
+        self._stop = threading.Event()
+        self.finished = False
+        self.generate_image_paths()
     
     def generate_image_paths(self):
         for arg in self.src_images:
@@ -99,30 +105,52 @@ class ImageHandler:
                     os.makedirs(dst_dir)
                 dst = os.path.join(dst_dir, os.path.basename(arg))
                 self.append((src, dst))
+        self.imgs_total = len(self.images)
 
+    # def stop(self):
+    #     self._stop.set()
 
-    def process(self):
-        self.generate_image_paths()
+    # def stopped(self):
+    #     return self._stop.isSet()
+
+    def terminate_pool(self):
+        if not self.finished:
+            self.pool.close()
+            self.pool.terminate()
+        return self.finished
+
+    def on_finish(self, x):
+        print("I finished", x)
+        self.finished = True        
+        self.error = False
+
+    def on_error(self, x):
+        print("I errored", x)
+        self.finished = True
+        self.error = True
+
+    def run(self):
 
         if not self.images: 
             print("No images found!") 
             sys.exit()
 
-        self.imgs_total = len(self.images)
         print("Images found: {}".format(self.imgs_total))
 
-        pool = ThreadPool(self.workers)
+        self.pool = ThreadPool(self.workers)
 
         time_start = time.time()
-        pool.starmap(self.resize_image, self.images)
-        pool.close()
-        pool.join()
-        time_end = time.time()
+        self.pool.starmap_async(
+            self.resize_image, self.images, 1, 
+            self.on_finish, self.on_error)
+        # pool.close()
+        # pool.join()
+        # time_end = time.time()
 
-        window = tkinter.Tk()
-        window.wm_withdraw()
-        tkinter.messagebox.showinfo('imgc - work finished', 'Images compressed: {}'.format(self.imgs_done))
-        print("Time elapsed: {}".format(time_end - time_start))
+        # # window = tkinter.Tk()
+        # # window.wm_withdraw()
+        # # tkinter.messagebox.showinfo('imgc - work finished', 'Images compressed: {}'.format(self.imgs_done))
+        # print("Time elapsed: {}".format(time_end - time_start))
 
 
     def append(self, path_tuple):
@@ -171,6 +199,9 @@ class ImageHandler:
             im.save(dst, 'JPEG', quality=quality)
         self.imgs_done += 1
         self.print_status(dst)
+        if self.on_image_processed:
+            print("no such function")
+            self.on_image_processed(self.imgs_done, self.imgs_total)
 
 
 def quality_type(x):
@@ -237,5 +268,5 @@ if __name__ == '__main__':
     args = parser.parse_args()
     print(args)
 
-    imgh = ImageHandler(**vars(args))
-    imgh.process()
+    # ImageHandler(**vars(args)).run()
+    ImageHandler(**vars(args)).start()
