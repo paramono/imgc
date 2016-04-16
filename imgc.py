@@ -17,6 +17,8 @@ def tofrac(x):
     """Convert percentage to floating point fraction"""
     return x/100.0
 
+def extension(path):
+    return os.path.splitext(path)[1][1:].strip().lower()
 
 def size_parse_tuple(orig_image, new_size):
     if not new_size[0] and not new_size[1]: 
@@ -70,9 +72,9 @@ class ImageHandler:
     def __init__(self, queue=None, **kwargs):
         self.__dict__.update(kwargs)
         self.images = [] # list of (src, dst) tuples
-        threading.Thread.__init__(self)
-        self.queue = queue
-        self._stop = threading.Event()
+        # threading.Thread.__init__(self)
+        # self.queue = queue
+        # self._stop = threading.Event()
         self.finished = False
         self.generate_image_paths()
     
@@ -84,17 +86,23 @@ class ImageHandler:
                 src = os.path.abspath(arg)
                 dst = os.path.abspath("{}-{}".format(src, self.dir_postfix))
                 if not os.path.exists(dst):
-                    os.makedirs(dst)
+                    os.makedirs(dst) # target path must always exist
+
                 for root, dirs, files in os.walk(src):
                     for d in dirs:
                         src_dir = os.path.join(root, d)
                         dst_dir = src_dir.replace(src, dst)
-                        if not os.path.exists(dst_dir):
-                            os.makedirs(dst_dir)
                     for f in files:
-                        if os.path.splitext(f)[1][1:].strip().lower() not in IMAGE_EXTS: continue
+                        if extension(f) not in IMAGE_EXTS: continue
+                        # if os.path.splitext(f)[1][1:].strip().lower() not in IMAGE_EXTS: continue
                         src_file = os.path.join(root, f)
                         dst_file = src_file.replace(src, dst)
+
+                        parent_dir = os.path.dirname(dst_file)
+                        print(parent_dir)
+                        if not os.path.exists(parent_dir):
+                            os.makedirs(parent_dir)
+                        print(dst_file)
                         self.append((src_file, dst_file))
 
             # process file path
@@ -105,6 +113,7 @@ class ImageHandler:
                     os.makedirs(dst_dir)
                 dst = os.path.join(dst_dir, os.path.basename(arg))
                 self.append((src, dst))
+            # print (self.images)
         self.imgs_total = len(self.images)
 
     # def stop(self):
@@ -120,12 +129,12 @@ class ImageHandler:
         return self.finished
 
     def on_finish(self, x):
-        print("I finished", x)
+        print("{}: finished successfully!".format(self.__class__.__name__))
         self.finished = True        
         self.error = False
 
     def on_error(self, x):
-        print("I errored", x)
+        print("{}: error - {}".format(self.__class__.__name__, str(x)))
         self.finished = True
         self.error = True
 
@@ -135,11 +144,14 @@ class ImageHandler:
             print("No images found!") 
             sys.exit()
 
-        print("Images found: {}".format(self.imgs_total))
+        # print("Images found: {}".format(self.imgs_total))
+        print("Images found: {}".format(len(self.images)))
+        # print(self.images)
 
         self.pool = ThreadPool(self.workers)
 
         time_start = time.time()
+        # self.pool.starmap(self.resize_image, self.images)
         self.pool.starmap_async(
             self.resize_image, self.images, 1, 
             self.on_finish, self.on_error)
@@ -163,6 +175,7 @@ class ImageHandler:
 
 
     def resize_image(self, src, dst):
+        print("resizing")
         size = self.size
         quality = self.quality
 
@@ -192,16 +205,44 @@ class ImageHandler:
             raise argparse.ArgumentTypeError("Invalid size type: only str, tuple and list supported")
 
         im = im.resize((wnew, hnew), Image.BICUBIC)
+
+        try:
+            watermark = Image.open(self.wmfile)
+            # if extension(self.wmfile) in "png":
+            #     watermark.load()                
+            wm_oldsize = watermark.size
+            wm_newdim = min(wnew, hnew) * 0.2
+            wm_oldindex, wm_olddim = min(enumerate(wm_oldsize))
+            print(wm_oldindex, wm_olddim)
+            wm_ratio = wm_newdim/wm_olddim
+            wm_newsize = (int(wm_oldsize[0] * wm_ratio), 
+                          int(wm_oldsize[1] * wm_ratio))
+            print(wm_newsize)
+            watermark = watermark.resize(wm_newsize)
+            # mask = watermark.convert("L").point(lambda x: min(x, 50))
+            # .point(lambda x: 240)
+            # mask.show()
+            # watermark.putalpha(mask)
+            im.paste(watermark, (0, 0), watermark)
+        except AttributeError:
+            pass
+
         if os.path.splitext(dst)[1][1:].strip().lower() not in IMAGE_JPG:
             im.save(dst)
+            print("saving non-jpeg %s" % dst)
         else:
             # quality supported by jpegs only
             im.save(dst, 'JPEG', quality=quality)
+            print("saving jpeg %s" % dst )
         self.imgs_done += 1
-        self.print_status(dst)
-        if self.on_image_processed:
-            print("no such function")
+        # self.print_status(dst)
+
+        print ("processed")
+        try:
             self.on_image_processed(self.imgs_done, self.imgs_total)
+            print ("method called")
+        except AttributeError:
+            self.print_status(dst)
 
 
 def quality_type(x):
@@ -262,11 +303,14 @@ if __name__ == '__main__':
         help='Quality for JPEG images')
     parser.add_argument('-s', '--size', type=size_type, default="1000x",
         help='New image size')
-    parser.add_argument('-w', '--workers', type=int, default=None,
+    parser.add_argument('-w', '--workers', type=int, default=2,
         help='Number of pool workers')
+    parser.add_argument('-f', '--wmfile', type=str, default=None,
+        help='Path to watermark')
 
     args = parser.parse_args()
-    print(args)
+    imgh = ImageHandler(**vars(args))
+    imgh.run()
 
-    # ImageHandler(**vars(args)).run()
-    ImageHandler(**vars(args)).start()
+    while not imgh.finished:
+        time.sleep(0.25)
