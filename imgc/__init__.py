@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 
+import argparse
+import os 
+import re
+import sys 
+import time
+import threading
+
 from multiprocessing.dummy import Pool as ThreadPool
+
 from PIL import Image
 
-import sys, os, time
-import argparse
-import re
-
-import threading
 
 IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif']
 IMAGE_JPG  = ['jpg', 'jpeg']
@@ -17,8 +20,10 @@ def tofrac(x):
     """Convert percentage to floating point fraction"""
     return x/100.0
 
+
 def extension(path):
     return os.path.splitext(path)[1][1:].strip().lower()
+
 
 def size_parse_tuple(orig_image, new_size):
     if not new_size[0] and not new_size[1]: 
@@ -290,12 +295,10 @@ def size_type(x):
         #     print("match: {} | {} x {}".format(p[0], m.group('width'), m.group('height')))
         # else:
         #     print("no match: {}".format(p[0]))
-    
 
-if __name__ == '__main__':
-
-    import tkinter
-    import tkinter.messagebox
+def main():
+    # import tkinter
+    # import tkinter.messagebox
 
     parser = argparse.ArgumentParser(description="Batch process pictures")
     parser.add_argument('src_images', metavar="path", type=str, nargs='+')
@@ -314,3 +317,7 @@ if __name__ == '__main__':
 
     while not imgh.finished:
         time.sleep(0.25)
+    
+
+if __name__ == '__main__':
+    main()
