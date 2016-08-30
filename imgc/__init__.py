@@ -1,71 +1,28 @@
 #!/usr/bin/env python3
 
 import argparse
-import os 
+import os
 import re
-import sys 
+import sys
 import time
 import threading
 
 from multiprocessing.dummy import Pool as ThreadPool
 
 from PIL import Image
+from imgc.utils.types import quality_type, size_type
+from imgc.image import ImageSize
 
 
 IMAGE_EXTS = ['jpg', 'jpeg', 'png', 'gif']
-IMAGE_JPG  = ['jpg', 'jpeg']
+IMAGE_JPG = ['jpg', 'jpeg']
 
 
-def tofrac(x):
-    """Convert percentage to floating point fraction"""
-    return x/100.0
 
 
 def extension(path):
     return os.path.splitext(path)[1][1:].strip().lower()
 
-
-def size_parse_tuple(orig_image, new_size):
-    if not new_size[0] and not new_size[1]: 
-        raise ArgumentTypeError("Size requires at least one dimension defined")
-
-    orig_size = orig_image.size
-    aratio = orig_size[0]/orig_size[1]
-
-    w, h = new_size
-    if not w:
-        w = int(h * aratio) # wnew = hnew * (w / h)
-    if not h:
-        h = int(w / aratio) # wnew = hnew * (w / h)
-    return (w, h)
-
-
-def size_parse_abs(orig_image, new_size):
-    return size_parse_tuple(orig_image, (new_size))
-
-
-def size_parse_rel(orig_image, new_size):
-    w, h = new_size
-    if not w and not h:
-        raise ArgumentTypeError("Relative size requires at least one dimension defined")
-
-    if not w: w = h
-    if not h: h = w
-
-    w = int(tofrac(w) * orig_image.size[0])
-    h = int(tofrac(h) * orig_image.size[1])
-
-    return size_parse_tuple(orig_image, (w, h))
-
-
-pat_rel = re.compile("^((?P<width>\d+)%)?(x((?P<height>\d+)%)?)?$")
-pat_abs = re.compile("^(?P<width>\d+)?(x(?P<height>\d+)?)?$")
-
-# attempt to imitate imagemagick
-size_patterns  = [
-    ("abs", pat_abs, size_parse_abs),
-    ("rel", pat_rel, size_parse_rel),
-]
 
 class ImageHandler:
     dir_postfix = 'imgc'
@@ -139,9 +96,10 @@ class ImageHandler:
         self.error = False
 
     def on_error(self, x):
-        print("{}: error - {}".format(self.__class__.__name__, str(x)))
-        self.finished = True
-        self.error = True
+        raise x
+        # print("{}: error - {}".format(self.__class__.__name__, str(x)))
+        # self.finished = True
+        # self.error = True
 
     def run(self):
 
@@ -158,7 +116,7 @@ class ImageHandler:
         time_start = time.time()
         # self.pool.starmap(self.resize_image, self.images)
         self.pool.starmap_async(
-            self.resize_image, self.images, 1, 
+            self.resize_image, self.images, 1,
             self.on_finish, self.on_error)
         # pool.close()
         # pool.join()
@@ -169,68 +127,47 @@ class ImageHandler:
         # # tkinter.messagebox.showinfo('imgc - work finished', 'Images compressed: {}'.format(self.imgs_done))
         # print("Time elapsed: {}".format(time_end - time_start))
 
-
     def append(self, path_tuple):
         self.images.append(path_tuple)
-
 
     def print_status(self, dst):
         print("[{}/{}] processed image {}".format(
             self.imgs_done, self.imgs_total, os.path.split(dst)[1]))
 
+    # FIXME: add watermark feature
+    # def watermark():
+    #     try:
+    #         watermark = Image.open(self.wmfile)
+    #         # if extension(self.wmfile) in "png":
+    #         #     watermark.load()                
+    #         wm_oldsize = watermark.size
+    #         wm_newdim = min(wnew, hnew) * 0.2
+    #         wm_oldindex, wm_olddim = min(enumerate(wm_oldsize))
+    #         print(wm_oldindex, wm_olddim)
+    #         wm_ratio = wm_newdim/wm_olddim
+    #         wm_newsize = (int(wm_oldsize[0] * wm_ratio), 
+    #                       int(wm_oldsize[1] * wm_ratio))
+    #         print(wm_newsize)
+    #         watermark = watermark.resize(wm_newsize)
+    #         # mask = watermark.convert("L").point(lambda x: min(x, 50))
+    #         # .point(lambda x: 240)
+    #         # mask.show()
+    #         # watermark.putalpha(mask)
+    #         im.paste(watermark, (0, 0), watermark)
+    #     except AttributeError:
+    #         pass
 
     def resize_image(self, src, dst):
         print("resizing")
-        size = self.size
+        pattern = self.size
         quality = self.quality
 
         im = Image.open(src)
-        origsize = im.size
-        aratio = origsize[0]/origsize[1]
 
-        # process size tuples 
-        # with absolute image dimensions (800x600 etc.)
-        if isinstance(size, (tuple, list)):
-            wnew, hnew = size_parse_tuple(im, size)
-        # process string pattern provided by user:
-        # takes the first match from size_patterns
-        # and runs validator callback embedded in a tuple
-        elif isinstance(size, str):
-            for p in size_patterns:
-                m = p[1].match(size)
-                if m: 
-                    wpat, hpat = m.group('width'), m.group('height')
-                    if wpat: wpat = int(wpat)
-                    if hpat: hpat = int(hpat)
-                    wnew, hnew = p[2](im, (wpat, hpat))
-                    break
-            else:
-                raise argparse.ArgumentTypeError("Invalid size pattern")
-        else:
-            raise argparse.ArgumentTypeError("Invalid size type: only str, tuple and list supported")
+        new_size = ImageSize.parse(pattern, image=im)
+        print('new_size:', new_size)
+        im = im.resize(new_size, Image.BICUBIC)
 
-        im = im.resize((wnew, hnew), Image.BICUBIC)
-
-        try:
-            watermark = Image.open(self.wmfile)
-            # if extension(self.wmfile) in "png":
-            #     watermark.load()                
-            wm_oldsize = watermark.size
-            wm_newdim = min(wnew, hnew) * 0.2
-            wm_oldindex, wm_olddim = min(enumerate(wm_oldsize))
-            print(wm_oldindex, wm_olddim)
-            wm_ratio = wm_newdim/wm_olddim
-            wm_newsize = (int(wm_oldsize[0] * wm_ratio), 
-                          int(wm_oldsize[1] * wm_ratio))
-            print(wm_newsize)
-            watermark = watermark.resize(wm_newsize)
-            # mask = watermark.convert("L").point(lambda x: min(x, 50))
-            # .point(lambda x: 240)
-            # mask.show()
-            # watermark.putalpha(mask)
-            im.paste(watermark, (0, 0), watermark)
-        except AttributeError:
-            pass
 
         if os.path.splitext(dst)[1][1:].strip().lower() not in IMAGE_JPG:
             im.save(dst)
@@ -250,65 +187,27 @@ class ImageHandler:
             self.print_status(dst)
 
 
-def quality_type(x):
-    """argparse quality validator for JPEGs
-    accepts values from 1 to 100"""
-
-    x = int(x)
-    if x < 1:
-        raise argparse.ArgumentTypeError("Minimum JPEG quality is 1")
-    if x > 100:
-        raise argparse.ArgumentTypeError("Maximum JPEG quality is 100")
-    return x
-
-
-def size_type(x):
-    """argparse size validator for images
-    attempts to imitate imagemagick patterns
-    (see size_patterns for additional info)
-
-    EXAMPLES:
-    relative size patterns:
-    70%x80%
-    70%
-    70%x
-    x80%
-
-    absolute size patterns:
-    800x600
-    800
-    800x
-    x600
-
-    TODO:
-    ! < > ^ flags 
-    """
-
-    for p in size_patterns:
-        m = p[1].match(x)
-        if m: break
-    else:
-        raise argparse.ArgumentTypeError("Invalid size pattern")
-
-    return x
-        # if m:
-        #     print("match: {} | {} x {}".format(p[0], m.group('width'), m.group('height')))
-        # else:
-        #     print("no match: {}".format(p[0]))
-
 def main():
     # import tkinter
     # import tkinter.messagebox
 
     parser = argparse.ArgumentParser(description="Batch process pictures")
     parser.add_argument('src_images', metavar="path", type=str, nargs='+')
-    parser.add_argument('-q', '--quality', type=quality_type, default=90,
+    parser.add_argument(
+        '-q', '--quality',
+        default=90, type=quality_type,
         help='Quality for JPEG images')
-    parser.add_argument('-s', '--size', type=size_type, default="1000x",
+    parser.add_argument(
+        '-s', '--size',
+        default="1000x", type=size_type,
         help='New image size')
-    parser.add_argument('-w', '--workers', type=int, default=2,
+    parser.add_argument(
+        '-w', '--workers',
+        default=2, type=int,
         help='Number of pool workers')
-    parser.add_argument('-f', '--wmfile', type=str, default=None,
+    parser.add_argument(
+        '-f', '--wmfile',
+        default=None, type=str,
         help='Path to watermark')
 
     args = parser.parse_args()
@@ -317,7 +216,7 @@ def main():
 
     while not imgh.finished:
         time.sleep(0.25)
-    
+
 
 if __name__ == '__main__':
     main()
