@@ -158,28 +158,29 @@ class ImageHandler:
     #         pass
 
     def resize_image(self, src, dst):
-        print("resizing")
+        # print("resizing")
         pattern = self.size
         quality = self.quality
 
-        im = Image.open(src)
+        try:
+            im = Image.open(src)
 
-        new_size = ImageSize.parse(pattern, image=im)
-        print('new_size:', new_size)
-        im = im.resize(new_size, Image.BICUBIC)
+            new_size = ImageSize.parse(pattern, image=im)
+            # print('new_size:', new_size)
+            im = im.resize(new_size, Image.BICUBIC)
 
+            if os.path.splitext(dst)[1][1:].strip().lower() not in IMAGE_JPG:
+                im.save(dst)
+            else:
+                # quality supported by jpegs only
+                im.save(dst, 'JPEG', quality=quality)
 
-        if os.path.splitext(dst)[1][1:].strip().lower() not in IMAGE_JPG:
-            im.save(dst)
-            print("saving non-jpeg %s" % dst)
-        else:
-            # quality supported by jpegs only
-            im.save(dst, 'JPEG', quality=quality)
-            print("saving jpeg %s" % dst )
-        self.imgs_done += 1
-        # self.print_status(dst)
+            print("saved: %s" % dst)
+            self.imgs_done += 1
+        except OSError as err:  # e.g. file is corrupt and cannot be open
+            print('ERROR')
+            print(err)
 
-        print ("processed")
         try:
             self.on_image_processed(self.imgs_done, self.imgs_total)
             print ("method called")
